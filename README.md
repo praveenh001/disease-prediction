@@ -110,7 +110,6 @@ disease-prediction/
 ├── README.md
 ├── static/
 │   ├── styles.css
-│   └── images/
 ├── templates/
 │   ├── home.html
 │   ├── login.html
