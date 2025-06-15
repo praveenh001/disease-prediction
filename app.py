@@ -2,16 +2,19 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import MultiLabelBinarizer
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+import re
 import warnings
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-please-change-this'
+app.secret_key = 'a8b3c7d2e9f43a14bf1e92587db67c3a5cc9f71baf9d4465f7e9842e1c6cda3b'
 
-# Initialize SQLite database
+
+# --- Database Initialization ---
 def init_db():
     with sqlite3.connect('users.db') as conn:
         conn.execute('''CREATE TABLE IF NOT EXISTS users (
@@ -22,17 +25,16 @@ def init_db():
             age INTEGER,
             gender TEXT
         )''')
-        # Add a default user for testing
         try:
             conn.execute('INSERT OR IGNORE INTO users (username, password, email, age, gender) VALUES (?, ?, ?, ?, ?)',
-                        ('testuser', generate_password_hash('password123'), 'test@example.com', 30, 'Other'))
+                         ('testuser', generate_password_hash('password123'), 'test@example.com', 30, 'Other'))
             conn.commit()
         except sqlite3.IntegrityError:
             pass
 
 init_db()
 
-# Expanded symptom-disease dataset
+# --- Symptom-Disease Dataset & ML Model ---
 data = {
     'Disease': [
         'Common Cold', 'Influenza', 'Strep Throat', 'Gastroenteritis', 'Migraine',
@@ -61,111 +63,128 @@ data = {
     ]
 }
 
-# Create DataFrame
 df = pd.DataFrame(data)
-
-# Convert symptoms to binary features
 mlb = MultiLabelBinarizer()
 symptom_matrix = mlb.fit_transform(df['Symptoms'])
-symptom_df = pd.DataFrame(symptom_matrix, columns=mlb.classes_)
 
-# Initialize Random Forest model
 rf = RandomForestClassifier(n_estimators=100, random_state=42)
 rf.fit(symptom_matrix, df['Disease'])
 
+# --- Utility Functions ---
 def predict_diseases(user_symptoms, user_severities):
     user_vector = mlb.transform([user_symptoms])[0]
     weighted_vector = user_vector * np.array([user_severities.get(sym, 1.0) for sym in mlb.classes_])
     probs = rf.predict_proba([weighted_vector])[0]
-    predictions = []
-    for idx, prob in enumerate(probs):
-        if prob > 0.1:
-            predictions.append((rf.classes_[idx], round(prob * 100, 2)))
-    predictions.sort(key=lambda x: x[1], reverse=True)
-    return predictions[:3]
+    predictions = [(rf.classes_[idx], round(prob * 100, 2)) for idx, prob in enumerate(probs) if prob > 0.1]
+    return sorted(predictions, key=lambda x: x[1], reverse=True)[:3]
+
+def login_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if 'username' not in session:
+            flash('Login required!')
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return wrapper
+
+# --- Routes ---
 
 @app.route('/')
 def index():
-    if 'username' in session:
-        return redirect(url_for('home'))
     return redirect(url_for('login'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
+        username = request.form['username'].strip()
+        password = request.form['password'].strip()
+
         with sqlite3.connect('users.db') as conn:
             user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
             if user and check_password_hash(user[2], password):
                 session['username'] = username
                 return redirect(url_for('home'))
-            flash('Invalid username or password')
+            elif not user:
+                flash('User not found. Please register.')
+            else:
+                flash('Incorrect password.')
     return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        email = request.form['email']
+        username = request.form['username'].strip()
+        password = request.form['password'].strip()
+        email = request.form['email'].strip()
         age = request.form['age']
         gender = request.form['gender']
+
+        if not username or not password or not email or not age:
+            flash('All fields are required.')
+            return redirect(url_for('register'))
+
+        if len(password) < 6:
+            flash('Password must be at least 6 characters long.')
+            return redirect(url_for('register'))
+
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            flash('Invalid email format.')
+            return redirect(url_for('register'))
+
         try:
             with sqlite3.connect('users.db') as conn:
                 conn.execute('INSERT INTO users (username, password, email, age, gender) VALUES (?, ?, ?, ?, ?)',
-                           (username, generate_password_hash(password), email, int(age), gender))
+                             (username, generate_password_hash(password), email, int(age), gender))
                 conn.commit()
-                session['username'] = username
-                return redirect(url_for('home'))
+                flash('Registration successful. Please login.')
+                return redirect(url_for('login'))
         except sqlite3.IntegrityError:
-            flash('Username already exists')
+            flash('Username already exists.')
+
     return render_template('login.html')
 
 @app.route('/logout')
 def logout():
     session.pop('username', None)
+    flash('You have been logged out.')
     return redirect(url_for('login'))
 
 @app.route('/home')
+@login_required
 def home():
-    if 'username' not in session:
-        return redirect(url_for('login'))
     return render_template('home.html', username=session['username'])
 
 @app.route('/symptoms', methods=['GET', 'POST'])
+@login_required
 def symptoms():
-    if 'username' not in session:
-        return redirect(url_for('login'))
     if request.method == 'POST':
         user_symptoms = request.form.getlist('symptoms')
         user_severities = {key.replace('severity_', ''): float(request.form[key]) for key in request.form if key.startswith('severity_')}
+
         if not user_symptoms:
-            flash('Please select at least one symptom')
+            flash('Please select at least one symptom.')
             return redirect(url_for('symptoms'))
+
         invalid_symptoms = [s for s in user_symptoms if s not in mlb.classes_]
         if invalid_symptoms:
             flash(f'Invalid symptoms: {", ".join(invalid_symptoms)}')
             return redirect(url_for('symptoms'))
-        predictions = predict_diseases(user_symptoms, user_severities)
-        session['predictions'] = predictions
+
+        session['predictions'] = predict_diseases(user_symptoms, user_severities)
         return redirect(url_for('results'))
+
     return render_template('symptoms.html', symptoms=mlb.classes_)
 
 @app.route('/results')
+@login_required
 def results():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    predictions = session.get('predictions', [])
-    return render_template('results.html', predictions=predictions)
+    return render_template('results.html', predictions=session.get('predictions', []))
 
 @app.route('/profile')
+@login_required
 def profile():
-    if 'username' not in session:
-        return redirect(url_for('login'))
     with sqlite3.connect('users.db') as conn:
-        user = conn.execute('SELECT username, email, age, gender FROM users WHERE username = ?',
-                           (session['username'],)).fetchone()
+        user = conn.execute('SELECT username, email, age, gender FROM users WHERE username = ?', (session['username'],)).fetchone()
     return render_template('profile.html', user=user)
 
 if __name__ == '__main__':
