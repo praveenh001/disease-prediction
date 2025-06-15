@@ -1,0 +1,52 @@
+body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1200px;
+}
+
+input, select, button {
+    transition: all 0.3s ease;
+}
+
+button {
+    border-radius: 9999px;
+}
+
+button:hover {
+    transform: scale(1.05);
+}
+
+nav a:hover {
+    text-decoration: none;
+    color: #bfdbfe;
+}
+
+nav {
+    background: linear-gradient(to right, #1e3a8a, #3b82f6);
+}
+
+.shadow-lg {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+img {
+    object-fit: cover;
+    max-width: 100%;
+    height: auto;
+}
+
+h1, h2, h3, h4 {
+    font-family: 'Georgia', serif;
+}
+
+.text-blue-800 {
+    color: #1e3a8a;
+}
+
+.bg-cover {
+    background-size: cover;
+    background-position: center;
+}
