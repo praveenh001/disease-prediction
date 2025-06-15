@@ -27,4 +27,6 @@ A **Flask-based web application** that predicts potential diseases based on user
 ### 1. Clone the Repository
 
 ```bash
-git clone 
+git clone https://github.com/praveenh001/disease-prediction.git
+
+
